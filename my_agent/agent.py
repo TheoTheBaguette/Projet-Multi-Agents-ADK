@@ -1,4 +1,5 @@
 from google.adk.agents import LlmAgent, SequentialAgent, ParallelAgent, LoopAgent
+from google.adk.tools import AgentTool  # ← AgentTool est dans tools, pas agents !
 from .tools import (
     search_recipes_by_ingredients,
     suggest_substitution,
@@ -114,7 +115,13 @@ Réponds EN FRANÇAIS uniquement.
 
 
 # ==============================================================================
+# AGENTTOOL : Transformer recipe_agent en outil
+recipe_search_tool = AgentTool(agent=recipe_agent)
+
+
+# ==============================================================================
 # AGENT 4 : Cooking Instructions Agent (Guide de Cuisine - Appels directs)
+# DÉMONTRE LE 2E MÉCANISME : Utilise recipe_agent comme outil via AgentTool
 
 
 cooking_instructions_agent = LlmAgent(
@@ -123,14 +130,23 @@ cooking_instructions_agent = LlmAgent(
     instruction="""Tu donnes les instructions pour préparer une recette.
 
 ÉTAPES :
-1. Appelle get_recipe_instructions UNE SEULE FOIS
-2. Si erreur : dis "Recette non trouvée" et ARRÊTE
-3. Si succès : présente ingrédients + étapes puis ARRÊTE
+1. Si l'utilisateur demande "Comment faire des crêpes ?" :
+   - Tu peux d'abord appeler search_recipes pour vérifier que la recette existe
+   - PUIS appelle get_recipe_instructions avec l'ID de la recette
+   - Présente le tout de manière cohérente
 
-NE rappelle JAMAIS appeler l'outil deux fois. Réponds EN FRANÇAIS.
+2. Si l'utilisateur demande "Comment cuisiner avec des oeufs et du lait ?" :
+   - Appelle search_recipes pour voir les recettes possibles
+   - Propose les options à l'utilisateur
+   - Une fois choisi, appelle get_recipe_instructions
+
+3. Si erreur : dis "Recette non trouvée" et ARRÊTE
+
+NE rappelle JAMAIS un outil deux fois. Réponds EN FRANÇAIS.
 """,
     tools=[
         get_recipe_instructions,
+        recipe_search_tool,  # ← AgentTool : recipe_agent utilisé comme outil !
         suggest_substitution
     ],
 )

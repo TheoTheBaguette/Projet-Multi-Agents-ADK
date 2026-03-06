@@ -67,6 +67,12 @@ root_agent (Coordinateur principal)
 
 ---
 
+### Les 2 mécanismes de délégation
+
+Le projet utilise `transfer_to_agent` (délégation complète via `root_agent.sub_agents`) et `AgentTool` (transformation d'agent en outil : `recipe_search_tool = AgentTool(agent=recipe_agent)` utilisé par `cooking_instructions_agent`).
+
+---
+
 ## Modèles testés
 
 | Modèle | Taille | Temps de réponse | 
