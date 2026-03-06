@@ -270,12 +270,3 @@ def generate_shopping_list(
         "count": len(to_buy),
         "message": f"Il te faut acheter {len(to_buy)} ingrédient(s) pour faire {recipe['name']}."
     }
-
-
-# Note importante pour la démo :
-# Ces 4 tools respectent les contraintes du TP (minimum 3 tools custom)
-# Chaque tool a :
-# - Annotations de type complètes
-# - Docstring détaillée (que l'IA peut lire)
-# - Gestion d'erreurs
-# - Retours structurés (dict)

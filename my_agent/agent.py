@@ -212,11 +212,7 @@ Réponds EN FRANÇAIS uniquement.
 
 recipe_planning_pipeline = SequentialAgent(
     name="recipe_planning_pipeline",
-    description="Pipeline pour planifier une recette de A à Z (DÉMONTRE LE STATE PARTAGÉ)",
-    # Ce workflow enchaîne les agents dans cet ordre :
-    # 1. inventory_agent : Sauvegarde les ingrédients avec output_key="user_ingredients"
-    # 2. recipe_search_with_state : Utilise {user_ingredients} du STATE (TEMPLATE!)
-    # 3. cooking_with_state : Utilise {user_ingredients} pour adapter les instructions
+    description="Pipeline pour planifier une recette de A à Z ",
     sub_agents=[
         inventory_agent,           # Sauvegarde user_ingredients dans le STATE
         recipe_search_with_state,  # Utilise le template {user_ingredients}
@@ -304,6 +300,7 @@ from datetime import datetime
 def on_agent_start_callback(**kwargs) -> None:
     """
     Callback appelé AVANT qu'un agent commence à traiter une requête.
+    
     """
     try:
         # ADK passe les infos via callback_context
@@ -347,6 +344,7 @@ def on_agent_start_callback(**kwargs) -> None:
 def on_tool_execution_callback(**kwargs) -> None:
     """
     Callback appelé APRÈS qu'un outil a été exécuté.
+    
     """
     try:
         # DEBUG: Afficher tous les kwargs pour comprendre la structure

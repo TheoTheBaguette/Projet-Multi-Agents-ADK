@@ -36,7 +36,7 @@ async def main_async():
             user_input = input("Vous: ").strip()
             
             if user_input.lower() in ['quit', 'exit', 'q']:
-                print("\nAu revoir!")
+                print("\nAu revoir")
                 break
             
             if not user_input:

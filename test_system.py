@@ -62,6 +62,6 @@ try:
 except Exception as e:
     print(f"ERREUR - {e}")
 
-print("\n" + "="*50)
+
 print("Tous les tests terminés avec succès")
 
