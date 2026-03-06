@@ -26,35 +26,35 @@ Le **Chef Cuisinier Virtuel** est un assistant culinaire intelligent qui utilise
 
 - *Version 1* : test avec un workflow de parallèle , fonctionne pas avec modèle faible et je n'aimais pas la structure
 - *Version 2* : remplacement du workflow de parallèle avec un workflow loop , marche mieux pour l'idée mais galère toujours avec le modèle faible 
+- *Version 3* : Correction du problème avec le séquentielle qui n'arrivait pas à utiliser le state correctement étant donné que le `root agent` pouvez appeler tous les agents du séquentielle et donc ne passe pas par le séquentielle -> ajout de nouveaux agents pouvant répondre aux demandes plus spécifique de l'utilisateur et fait sorte que le workflow séquentielle fonctionne comme attendu.
+- *Version 4 (final)* : suppresion de l'agent `inventory_validator_loop` qui ne servait pas vraiment au final dans les différents instruction de mon projet (il demandé aux utilisateurs s'il possedait les ingredient en fonction de la recette), le loop semblait inutile , sa faisait des prompt de l'ia inutile
 
 ### Structure des agents Final
 
 ```
 root_agent (Coordinateur principal)
 ├── inventory_agent (Gestion inventaire)
-├── recipe_agent (Recherche recettes)
-├── cooking_agent (Instructions)
-├── recipe_planning_pipeline (SequentialAgent)
+├── recipe_agent (Recherche recettes - appels directs)
+├── cooking_instructions_agent (Instructions - appels directs)
+├── recipe_planning_pipeline (SequentialAgent - DÉMONTRE STATE PARTAGÉ)
 │   ├── inventory_agent
-│   ├── recipe_agent
-│   └── cooking_agent
-├── menu_generator_loop (LoopAgent, max_iterations=3)
-│   └── menu_course_agent (Génère entrée/plat/dessert)
-└── inventory_validator_loop (LoopAgent, max_iterations=5)
-    └── ingredient_checker_agent (Valide ingrédients un par un)
+│   ├── recipe_search_with_state (avec template {user_ingredients})
+│   └── cooking_with_state (avec template {user_ingredients})
+└── menu_generator_loop (LoopAgent, max_iterations=3)
+    └── menu_course_agent (Génère entrée/plat/dessert)
 ```
 
-### Description des agents
 
-| Agent | Rôle | Type | Output Key |
-|-------|------|------|------------|
-| **root_agent** | Coordinateur principal | LlmAgent | - |
-| **inventory_agent** | Gère l'inventaire d'ingrédients | LlmAgent | `user_ingredients` |
-| **recipe_agent** | Recherche et recommande des recettes | LlmAgent | - |
-| **cooking_agent** | Guide les instructions de cuisine | LlmAgent | - |
-| **recipe_planning_pipeline** | Exécute séquentiellement : inventaire → recettes → cuisine | SequentialAgent | - |
-| **menu_generator_loop** | Génère un menu complet (entrée-plat-dessert) | LoopAgent (3 it.) | - |
-| **inventory_validator_loop** | Valide les ingrédients un par un | LoopAgent (5 it.) | - |
+| Agent | Rôle | Type | Template | Output Key |
+|-------|------|------|----------|------------|
+| **root_agent** | Coordinateur principal | LlmAgent | - | - |
+| **inventory_agent** | Gère l'inventaire d'ingrédients | LlmAgent | - | `user_ingredients` |
+| **recipe_agent** | Recherche recettes (appels directs) | LlmAgent | - | - |
+| **cooking_instructions_agent** | Instructions pour UNE recette (appels directs) | LlmAgent | - | - |
+| **recipe_search_with_state** | Recherche recettes avec state partagé | LlmAgent | `{user_ingredients}` | - |
+| **cooking_with_state** | Instructions adaptées aux ingrédients disponibles | LlmAgent | `{user_ingredients}` | - |
+| **recipe_planning_pipeline** | Pipeline complet : inventaire → recettes → cuisine | SequentialAgent | - | - |
+| **menu_generator_loop** | Génère un menu complet (entrée-plat-dessert) | LoopAgent (3 it.) | - | - |
 
 ### Les 4 outils custom
 
@@ -96,7 +96,7 @@ Malgré tout, j'ai continué à tester avec le modèle 2GB en parallèle. Parce 
 
 **Le problème du ParallelAgent**
 
-Un des gros soucis a été avec le ParallelAgent. Le modèle local avait vraiment du mal avec cette architecture. Je pense que mon idée initiale pour orchestrer des agents parallèles était peut-être trop confuse pour un petit modèle. Le système choisissait parfois le workflow séquentiel, parfois le parallèle, ce qui rendait le comportement imprévisible. Je suis donc passé aux LoopAgent avec une approche différente : un loop qui propose un menu complet avec les ingrédients disponibles (`menu_generator_loop` avec 3 itérations pour entrée-plat-dessert) et un autre pour valider les ingrédients un par un (`inventory_validator_loop` avec 5 itérations maximum). Mais là encore, le modèle faible en local hallucine et confond parfois mon LoopAgent avec un outil. 
+Un des gros soucis a été avec le ParallelAgent. Le modèle local avait vraiment du mal avec cette architecture. Je pense que mon idée initiale pour orchestrer des agents parallèles était peut-être trop confuse pour un petit modèle. Le système choisissait parfois le workflow séquentiel, parfois le parallèle, ce qui rendait le comportement imprévisible. Je suis donc passé à un LoopAgent avec une approche différente : un loop qui propose un menu complet avec les ingrédients disponibles (`menu_generator_loop` avec 3 itérations pour entrée-plat-dessert). Mais là encore, le modèle faible en local hallucine et confond parfois mon LoopAgent avec un outil. 
 *J'ai donc bien préciser au root agent de ne pas les appeler en tant que outil mais avec mon modèle faible il ignore cette remarque et me l'appele en tool....*
 
 **Les boucles infinies**
@@ -109,52 +109,130 @@ J'ai testé plusieurs situations problématiques : demander la liste des ingréd
 
 **Problème avec les templates de state partagé**
 
-La contrainte 4 du TP exige l'utilisation d'un `output_key` et de templates `{variable}`. Le problème : les templates ADK crashent avec `KeyError` si la variable n'existe pas dans le state. Or, un agent comme `recipe_agent` peut être appelé directement ("donne-moi une recette avec des oeufs") ou via le pipeline séquentiel. Dans le premier cas, `inventory_agent` n'a jamais été exécuté donc `user_ingredients` n'existe pas. Si on met le template `{user_ingredients}` dans l'instruction de `recipe_agent`, l'appel direct crashe. Solution adoptée : garder `output_key="user_ingredients"` dans `inventory_agent` pour satisfaire la contrainte, mais ne pas utiliser de templates explicites dans les agents appelables directement. Le state fonctionne dans le `recipe_planning_pipeline` de manière transparente.
+La contrainte 4 du TP exige l'utilisation d'un `output_key` et de templates `{variable}`. Le problème : les templates ADK crashent avec `KeyError` si la variable n'existe pas dans le state. Or, un agent comme `recipe_agent` peut être appelé directement ("donne-moi une recette avec des oeufs"). Dans ce cas, `inventory_agent` n'a jamais été exécuté donc `user_ingredients` n'existe pas et il y a une erreur.
 
-## Workflow Agents en détail
+**Solution adoptée** : Architecture à deux niveaux avec agents séparés.
 
-### 1. SequentialAgent : `recipe_planning_pipeline`
+1. **Agents pour appels directs** (dans `root.sub_agents`) :
+   - `recipe_agent` : 
+   - `cooking_instructions_agent` 
+Fonctionnent toujours, pas de crash si jamais l'utilisateur demande directement des recettes ou les instructions de celle si
 
-Enchaîne les agents dans un ordre précis pour planifier une recette complète :
+2. **Agents pour Sequential uniquement** (PAS dans `root.sub_agents`) :
+   - `recipe_search_with_state` : AVEC template `{user_ingredients}`
+   - `cooking_with_state` : AVEC template `{user_ingredients}`
+   -  Utilisés uniquement dans `recipe_planning_pipeline` où `inventory_agent` s'exécute en premier
+
+**Problème dernière version du projet avec le modèle local**
+
+Le modèle local ne fonctionne plus dutout :
+- il hallucine des tools qui n'existe même pas par exemple dans `recipe_agent`, pourtant c'est bien préciser quel tool utilisé
+- Il me fait des boucles infini , même s'il trouve la réponse , il continue de rappeler le tool encore et encore alors qu'encore une fois il est préciser de faire une seul fois
+- Il cofond aussi les types de donnés comme dans `recipe agent` , où il pense que je mélange du string et du int alors que pas dutout.
+
+la seul chose qu'il fait bien est le root agent qui délègue bien en fonction de l'instruction
+
+
+## Comment utiliser le Chef Cuisinier
+
+
+Pour les demandes rapides et ponctuelles, le système utilise un agent spécialisé qui répond immédiatement.
+
+#### Enregistrer vos ingrédients
+
+**Vous :** `J'ai des œufs, du lait, de la farine, du beurre et du sucre`
+
+**Chef :** Enregistre les ingrédients dans l'inventaire et confirme.
+
+Le `root_agent` délègue à `inventory_agent` qui stocke les ingrédients avec `output_key="user_ingredients"` (pour le state partagé).
+
+
+#### Chercher une recette spécifique
+
+**Vous :** `Trouve-moi une recette avec des œufs et de la farine`
+
+**Chef :** Propose plusieurs recettes compatibles :
+- Recettes 100% réalisables (tous les ingrédients disponibles)
+- Recettes presque possibles (1-2 ingrédients manquants)
+- Recettes inspirantes (pour planifier vos courses)
+
+Le `root_agent` délègue à `recipe_agent` qui utilise le tool `search_recipes_by_ingredients()`.
+
+
+#### Obtenir les instructions d'une recette
+
+**Vous :** `Comment faire des crêpes ?`
+
+**Chef :** Donne les instructions détaillées, le temps de préparation, la difficulté et les ingrédients nécessaires.
+
+Le `root_agent` délègue à `cooking_instructions_agent` qui utilise le tool `get_recipe_instructions()`.
+
+---
+
+#### Demander une substitution
+
+**Vous :** `Je n'ai pas de beurre, par quoi je peux le remplacer ?`
+
+**Chef :** Suggère des alternatives (huile, margarine) avec des conseils d'utilisation.
+
+Le `recipe_agent` ou `cooking_instructions_agent` utilise le tool `suggest_substitution()`.
+
+---
+
+#### Faire une liste de courses
+
+**Vous :** `De quoi j'ai besoin pour faire des crêpes ?`
+
+**Chef :** Génère la liste des ingrédients manquants à acheter.
+
+L'agent utilise le tool `generate_shopping_list()` en comparant la recette avec votre inventaire.
+
+---
+
+### Workflow complet (SequentialAgent)
+
+Pour une planification, le système enchaîne automatiquement 3 étapes.
+
+**Vous :** `Planifie-moi une recette complète` ou `Qu'est-ce que je peux cuisiner avec ce que j'ai ?`
+
 ```
-1. inventory_agent → Enregistre les ingrédients disponibles
-2. recipe_agent → Trouve des recettes compatibles
-3. cooking_agent → Donne les instructions de préparation
+1. inventory_agent → Demande et enregistre vos ingrédients (state["user_ingredients"])
+2. recipe_search_with_state → Trouve des recettes avec {user_ingredients} du state
+3. cooking_with_state → Donne les instructions adaptées à aux ingredients
 ```
 
-**Cas d'usage :** Workflow complet de A à Z pour cuisiner
-
-### 2. LoopAgent : `menu_generator_loop`
-
-Génère un menu complet en itérant 3 fois :
+**Exemple de déroulement :**
 ```
-Itération 1: Entrée (ex: Salade)
-Itération 2: Plat principal (ex: Lasagnes)
-Itération 3: Dessert (ex: Tiramisu)
+Chef: "Quels ingrédients avez-vous ?"
+Vous: "œufs, lait, farine"
+Chef: "Voici 3 recettes possibles : Crêpes, Gaufres, Pancakes"
+Vous: "Les crêpes"
+Chef: "Voici les instructions pour faire des crêpes avec vos ingrédients..."
 ```
-''''''''''''''''''CORIGERRRRRR'''''''''''''''''''''''''''''''''''''
+---
 
+### Génération de menu complet (LoopAgent)
 
-**Cas d'usage :** Vérification interactive de l'inventaire
+Pour créer un menu entrée-plat-dessert, le système génère 3 propositions en boucle.
 
-### Communication inter-agents
+**Vous :** `Propose-moi un menu avec des œufs et de la farine`
 
-**State partagé** : Les agents communiquent via un état partagé :
-- `inventory_agent` sauvegarde les ingrédients avec `output_key="user_ingredients"`
-- Les autres agents accèdent à ces données via `{user_ingredients}` dans leurs instructions
-
-**Exemple de flux :**
+**Ce qui se passe :**
 ```
-User → inventory_agent → state["user_ingredients"] = ["oeuf", "lait"]
-                                    ↓
-                          recipe_agent accède à {user_ingredients}
+Itération 1: Génère une entrée (ex: Salade César)
+Itération 2: Génère un plat principal (ex: Quiche Lorraine)
+Itération 3: Génère un dessert (ex: Crêpes Suzette)
 ```
 
-'''''''''''''''''''''''''''''''''''''''''''''''''''''''
+C'est le `menu_generator_loop` (LoopAgent, 3 itérations max) qui utilise `menu_course_agent` à chaque tour.
 
-### Callbacks implémentés
+**Résultat :** Un menu complet avec les ingrédients demandés.
 
-Deux types de callbacks sont implémentés pour le logging et la traçabilité :
+---
+
+### Callbacks et logging
+
+Chaque interaction est automatiquement loggée dans `logs/` :
 
 1. **before_agent_callback** : Enregistre le démarrage d'un agent (nom, timestamp)
 2. **after_tool_callback** : Enregistre l'exécution d'un outil (nom, résultat, durée)
@@ -191,7 +269,7 @@ Windows PowerShell :
 
 4. **Installer les dépendances**
 ```bash
-pip install google-adk
+pip install -r requirements.txt
 ```
 
 5. **Configurer le modèle**
@@ -241,53 +319,6 @@ adk web
 ```bash
 python main.py
 ```
-
-Interface en ligne de commande interactive
-
----
-
-## Exemples d'utilisation
-
-(Remarque pour : 1.1 , 1.2 , etc ; cela signifie qu'il faut l'executer à la suite dans le même ADK )
-
-### Scénario 1.1 : Enregistrer ses ingrédients
-
-**Vous :** `J'ai des œufs, du lait, de la farine, du beurre et du sucre`
-
-**Chef :** Enregistre les ingrédients et confirme
-
-### Scénario 1.2 : Chercher des recettes
-
-**Vous :** `Qu'est-ce que je peux cuisiner avec ce que j'ai ?`
-
-**Chef :** Affiche :
-- Recettes 100% possibles (tous les ingrédients disponibles)
-- Recettes presque possibles (1-2 ingrédients manquants)
-- Recettes inspirantes (pour planifier les courses)
-
-### Scénario 2 : Obtenir des instructions
-
-**Vous :** `Comment faire des crêpes ?`
-
-**Chef :** Donne les instructions détaillées étape par étape
-
-### Scénario 3 : Demander une substitution
-
-**Vous :** `Je n'ai pas de beurre, par quoi je peux le remplacer ?`
-
-**Chef :** Suggère de l'huile ou de la margarine avec des conseils
-
-### Scénario 4   : Liste de courses
-
-**Vous :** `De quoi j'ai besoin pour faire des crêpes ?`
-
-**Chef :** Génère une liste de courses avec ce qu'il faut acheter
-
-### Scénario 5 : Créer un menu
-
-**Vous :** `Propose moi un menu avec des oeufs et de la farine`
-
-**Chef :** Gènere une entrée , un plat et un dessert qui comprenne des oeufs et de la farine.
 
 
 

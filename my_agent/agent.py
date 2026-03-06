@@ -1,24 +1,3 @@
-"""
-Système Multi-Agents : Chef Cuisinier Virtuel
-==============================================
-
-Ce système permet de :
-- Gérer un inventaire d'ingrédients
-- Trouver des recettes compatibles
-- Guider l'utilisateur dans la préparation
-
-Architecture : 4 agents spécialisés qui collaborent
-- root_agent : Coordinateur principal (obligatoire dans ADK)
-- inventory_agent : Gestion des ingrédients
-- recipe_agent : Expert en recettes
-- cooking_agent : Guide de cuisine
-
-IMPORTANT pour la démo :
-- Chaque agent a un RÔLE précis (specialisation)
-- Les agents communiquent via STATE partagé
-- Ils utilisent les TOOLS créés précédemment
-"""
-
 from google.adk.agents import LlmAgent, SequentialAgent, ParallelAgent, LoopAgent
 from .tools import (
     search_recipes_by_ingredients,
@@ -45,23 +24,24 @@ else:
 # ==============================================================================
 # AGENT 1 : Root Agent (Coordinateur Principal)
 
-# Rôle : C'est le "chef d'orchestre" qui accueille l'utilisateur et délègue
-#        aux bons agents spécialisés selon la demande
-# ==============================================================================
-
 root_agent = LlmAgent(
     name="root_agent",
     model=MODEL_NAME,
     instruction="""Tu es un coordinateur qui DÉLÈGUE aux agents spécialisés.
 
 Utilise transfer_to_agent UNE SEULE FOIS pour déléguer :
-- Ingrédients → transfer_to_agent(agent_name="inventory_agent")
-- Recettes → transfer_to_agent(agent_name="recipe_agent")  
-- Instructions cuisine → transfer_to_agent(agent_name="cooking_agent")
-- Planification complète → transfer_to_agent(agent_name="recipe_planning_pipeline")
-- Menu complet → transfer_to_agent(agent_name="menu_generator_loop")
-- Vérification inventaire → transfer_to_agent(agent_name="inventory_validator_loop")
+- Enregistrer/consulter ingrédients → transfer_to_agent(agent_name="inventory_agent")
+- Chercher recettes → transfer_to_agent(agent_name="recipe_agent")  
+- Instructions pour UNE recette → transfer_to_agent(agent_name="cooking_instructions_agent")
+- Planification complète A à Z → transfer_to_agent(agent_name="recipe_planning_pipeline")
+- Générer menu complet → transfer_to_agent(agent_name="menu_generator_loop")
 
+IMPORTANT :
+- Si demande simple (recette OU instructions) → agent individuel
+- Si demande complète (planification, workflow) → recipe_planning_pipeline
+- Si demande de menu complet (workflow) → menu_generator_loop
+
+Les agents ne sont PAS des tools
 Après la délégation, ARRÊTE. Ne réponds pas directement.
 """,
 )
@@ -69,9 +49,6 @@ Après la délégation, ARRÊTE. Ne réponds pas directement.
 
 # ==============================================================================
 # AGENT 2 : Inventory Agent (Gestionnaire d'Inventaire)
-# ==============================================================================
-# Rôle : Garde en mémoire les ingrédients disponibles et aide à la planification
-# ==============================================================================
 
 inventory_agent = LlmAgent(
     name="inventory_agent",
@@ -95,27 +72,38 @@ Réponds EN FRANÇAIS uniquement.
 
 # ==============================================================================
 # AGENT 3 : Recipe Agent (Expert en Recettes)
-# ==============================================================================
-# Rôle : Trouve des recettes compatibles avec les ingrédients disponibles
-# Tools : Utilise search_recipes_by_ingredients, suggest_substitution
-# ==============================================================================
+
 
 recipe_agent = LlmAgent(
     name="recipe_agent",
     model=MODEL_NAME,
-    instruction="""Tu cherches des recettes avec les ingrédients de l'utilisateur.
+    instruction="""Tu es un expert en recherche de recettes.
 
-ÉTAPES :
-1. Appelle search_recipes_by_ingredients UNE SEULE FOIS
-2. Si résultats vides : dis "Désolé, aucune recette avec ces ingrédients" et ARRÊTE
-3. Si résultats trouvés : présente les recettes par catégorie puis ARRÊTE
+PROCÉDURE STRICTE (1 APPEL OUTIL MAXIMUM) :
 
-les catégories sont :
-- RECETTES 100% possibles
-- RECETTES presque possibles (manque 1 ou 2 ingrédients)
-- RECETTES inspirantes (beaucoup d'ingrédients manquants mais on possède au moins 1 ingrédient clé)
+1. Appelle search_recipes_by_ingredients() UNE SEULE FOIS avec les ingrédients
+2. Une fois le résultat reçu, présente les recettes et ARRÊTE IMMÉDIATEMENT
+3. N'appelle JAMAIS un outil deux fois
 
-NE rappelle JAMAIS l'outil deux fois. Réponds EN FRANÇAIS.
+FORMAT DE RÉPONSE :
+
+Si des recettes sont trouvées :
+"Voici les recettes compatibles :
+
+RECETTES 100% POSSIBLES :
+- [Nom recette] ([temps], [difficulté])
+
+RECETTES PRESQUE POSSIBLES :
+- [Nom recette] - Manque : [ingrédients] ([temps], [difficulté])
+
+RECETTES INSPIRANTES :
+- [Nom recette] - Manque : [ingrédients] ([temps], [difficulté])"
+
+Si aucune recette :
+"Désolé, aucune recette trouvée avec ces ingrédients."
+
+IMPORTANT : Après avoir présenté les recettes, STOP. N'appelle plus aucun outil.
+Réponds EN FRANÇAIS uniquement.
 """,
     tools=[
         search_recipes_by_ingredients,
@@ -126,23 +114,20 @@ NE rappelle JAMAIS l'outil deux fois. Réponds EN FRANÇAIS.
 
 
 # ==============================================================================
-# AGENT 4 : Cooking Agent (Guide de Cuisine)
-# ==============================================================================
-# Rôle : Donne les instructions étape par étape pour préparer une recette
-# Tools : Utilise get_recipe_instructions
-# ==============================================================================
+# AGENT 4 : Cooking Instructions Agent (Guide de Cuisine - Appels directs)
 
-cooking_agent = LlmAgent(
-    name="cooking_agent",
+
+cooking_instructions_agent = LlmAgent(
+    name="cooking_instructions_agent",
     model=MODEL_NAME,
-    instruction="""Tu donnes les instructions de cuisine.
+    instruction="""Tu donnes les instructions pour préparer une recette.
 
 ÉTAPES :
 1. Appelle get_recipe_instructions UNE SEULE FOIS
 2. Si erreur : dis "Recette non trouvée" et ARRÊTE
 3. Si succès : présente ingrédients + étapes puis ARRÊTE
 
-NE rappelle JAMAIS l'outil deux fois. Réponds EN FRANÇAIS.
+NE rappelle JAMAIS appeler l'outil deux fois. Réponds EN FRANÇAIS.
 """,
     tools=[
         get_recipe_instructions,
@@ -151,40 +136,98 @@ NE rappelle JAMAIS l'outil deux fois. Réponds EN FRANÇAIS.
 )
 
 
+# ==============================================================================
+# AGENT 5 : Cooking With State (Guide de Cuisine - UNIQUEMENT pour Sequential)
 
+
+cooking_with_state = LlmAgent(
+    name="cooking_with_state",
+    model=MODEL_NAME,
+    instruction="""Tu donnes les instructions de cuisine en tenant compte des ingrédients disponibles.
+
+INGRÉDIENTS DISPONIBLES (récupérés du state partagé) : {user_ingredients}
+
+ÉTAPES :
+1. Appelle get_recipe_instructions UNE SEULE FOIS
+2. Si erreur : dis "Recette non trouvée" et ARRÊTE
+3. Si succès : présente les instructions ET mentionne si certains ingrédients manquent
+4. Si ingrédients manquants : propose des substitutions depuis la liste disponible
+
+NE rappelle JAMAIS appeler l'outil deux fois. Réponds EN FRANÇAIS.
+""",
+    tools=[
+        get_recipe_instructions,
+        suggest_substitution
+    ],
+)
+
+
+# ==============================================================================
+# AGENT 5 : Recipe Search With State (UNIQUEMENT pour SequentialAgent)
+
+
+recipe_search_with_state = LlmAgent(
+    name="recipe_search_with_state",
+    model=MODEL_NAME,
+    instruction="""Tu cherches des recettes en utilisant les ingrédients sauvegardés en mémoire.
+
+INGRÉDIENTS DISPONIBLES (du state partagé) : {user_ingredients}
+
+PROCÉDURE STRICTE (1 APPEL OUTIL MAXIMUM) :
+
+1. Appelle search_recipes_by_ingredients() UNE SEULE FOIS avec les ingrédients du state
+2. Une fois le résultat reçu, présente les recettes et ARRÊTE IMMÉDIATEMENT
+3. N'appelle JAMAIS un outil deux fois
+
+FORMAT DE RÉPONSE :
+
+Si des recettes sont trouvées :
+"Voici les recettes compatibles avec vos ingrédients :
+
+RECETTES 100% POSSIBLES :
+- [Nom recette] ([temps], [difficulté])
+
+RECETTES PRESQUE POSSIBLES :
+- [Nom recette] - Manque : [ingrédients] ([temps], [difficulté])
+
+RECETTES INSPIRANTES :
+- [Nom recette] - Manque : [ingrédients] ([temps], [difficulté])"
+
+Si aucune recette :
+"Désolé, aucune recette trouvée avec ces ingrédients."
+
+IMPORTANT : Après avoir présenté les recettes, STOP. N'appelle plus aucun outil.
+Réponds EN FRANÇAIS uniquement.
+""",
+    tools=[
+        search_recipes_by_ingredients,
+        suggest_substitution,
+        generate_shopping_list
+    ],
+)
 
 
 # ==============================================================================
 # WORKFLOW AGENT 1 : SequentialAgent (Pipeline de préparation)
-# ==============================================================================
-# Rôle : Enchaîne plusieurs agents dans un ordre précis
-# Use case : Planification complète d'une recette
-# DÉMONTRE : STATE PARTAGÉ (Contrainte 4 du TP)
-# ==============================================================================
 
 recipe_planning_pipeline = SequentialAgent(
     name="recipe_planning_pipeline",
-    description="Pipeline pour planifier une recette de A à Z",
+    description="Pipeline pour planifier une recette de A à Z (DÉMONTRE LE STATE PARTAGÉ)",
     # Ce workflow enchaîne les agents dans cet ordre :
     # 1. inventory_agent : Sauvegarde les ingrédients avec output_key="user_ingredients"
-    # 2. recipe_agent : Trouve des recettes (peut accéder au state partagé)
-    # 3. cooking_agent : Donne les instructions de préparation
+    # 2. recipe_search_with_state : Utilise {user_ingredients} du STATE (TEMPLATE!)
+    # 3. cooking_with_state : Utilise {user_ingredients} pour adapter les instructions
     sub_agents=[
-        inventory_agent,    # Sauvegarde user_ingredients dans le STATE
-        recipe_agent,       # Accède au STATE partagé
-        cooking_agent       # Accède au STATE partagé
+        inventory_agent,           # Sauvegarde user_ingredients dans le STATE
+        recipe_search_with_state,  # Utilise le template {user_ingredients}
+        cooking_with_state         # Utilise le template {user_ingredients}
     ],
-    # IMPORTANT : SequentialAgent = tous les agents partagent le MÊME state
-    # C'est la DÉMONSTRATION du STATE PARTAGÉ (Contrainte 4 du TP) !
+ 
 )
 
 
 # ==============================================================================
 # WORKFLOW AGENT 2 : LoopAgent (Générateur de Menu Complet)
-# ==============================================================================
-# Rôle : Exécute un agent EN BOUCLE pour créer un menu complet
-# Use case : Générer Entrée → Plat principal → Dessert (3 plats différents)
-# ==============================================================================
 
 # Agent qui sera exécuté en boucle pour chaque type de plat
 menu_course_agent = LlmAgent(
@@ -239,103 +282,140 @@ menu_generator_loop = LoopAgent(
 
 
 # ==============================================================================
-# WORKFLOW AGENT 3 : LoopAgent (Validateur d'Inventaire Interactif)
-# ==============================================================================
-# Rôle : Exécute un agent EN BOUCLE pour vérifier chaque ingrédient un par un
-# Use case : Valider si l'utilisateur possède tous les ingrédients d'une recette
-# ==============================================================================
-
-# Agent qui vérifie UN ingrédient à la fois
-ingredient_checker_agent = LlmAgent(
-    name="ingredient_checker_agent",
-    model=MODEL_NAME,
-    instruction="""Tu vérifies si l'utilisateur possède UN ingrédient.
-
-PROCESSUS SIMPLE :
-1. Demande "As-tu [ingrédient] ?"
-2. Attends la réponse (oui/non)
-3. Note : si oui, si non
-4. STOP - passe au suivant
-
-Sois bref : "As-tu des œufs ? " puis ARRÊTE.""",
-)
-
-# LoopAgent qui vérifie plusieurs ingrédients
-inventory_validator_loop = LoopAgent(
-    name="inventory_validator_loop",
-    description="Valide l'inventaire en vérifiant chaque ingrédient un par un",
-    sub_agents=[ingredient_checker_agent],  # Agent répété en boucle
-    max_iterations=5,  # Maximum 5 ingrédients à vérifier
-    # IMPORTANT : Cas d'usage très clair et utile !
-    # User : "Vérifie si j'ai tout pour faire des crêpes"
-    # Itération 1 : "As-tu des œufs ?" → Vérifie
-    # Itération 2 : "As-tu du lait ?" → Vérifie
-    # Itération 3 : "As-tu de la farine ?" → Vérifie
-    # → Inventaire validé ingrédient par ingrédient
-)
-
-
-# ==============================================================================
 # CONFIGURATION DES DÉLÉGATIONS
-# ==============================================================================
-# Maintenant que tous les agents sont définis, configurons le root_agent
-# pour qu'il puisse DÉLÉGUER aux agents spécialisés
-# ==============================================================================
 
 # Mise à jour du root_agent avec les sub_agents
 root_agent.sub_agents = [
-    inventory_agent,
-    recipe_agent,
-    cooking_agent,
-    recipe_planning_pipeline,    # Workflow séquentiel
-    menu_generator_loop,          # Workflow en boucle #1 : Menu
-    inventory_validator_loop      # Workflow en boucle #2 : Validation
+    # Agents individuels (appelables directement)
+    inventory_agent,                   
+    recipe_agent,                      
+    cooking_instructions_agent,       
+    
+    # Workflows
+    recipe_planning_pipeline,          
+    menu_generator_loop,               
 ]
 
-# EXPLICATION pour la démo :
-# Avec sub_agents configuré, le root_agent peut maintenant :
-# 1. TRANSFER TO AGENT : Déléguer complètement à un agent spécialisé
-#    Exemple : "Trouve-moi une recette" → root transfère à recipe_agent
-#    L'utilisateur interagit alors DIRECTEMENT avec recipe_agent
-#
-# 2. AGENT TOOL : Invoquer un agent comme un outil (on configurera ça plus tard)
-#    L'agent est appelé en arrière-plan et retourne un résultat
 
+from .logging_config import agent_logger
+from datetime import datetime
 
-# ==============================================================================
-# CALLBACKS (Minimum 2 types différents requis par le TP)
-# ==============================================================================
-# Les callbacks permettent d'exécuter du code à des moments précis :
-# - before_agent_callback : Avant qu'un agent commence
-# - after_agent_callback : Après qu'un agent termine
-# - before_tool_callback : Avant qu'un outil soit appelé
-# - after_tool_callback : Après qu'un outil soit appelé
-# - on_model_error_callback : En cas d'erreur du modèle
-# - on_tool_error_callback : En cas d'erreur d'un outil
-# ==============================================================================
 
 def on_agent_start_callback(**kwargs) -> None:
-    #Callback appelé AVANT qu'un agent commence à traiter une requête
+    """
+    Callback appelé AVANT qu'un agent commence à traiter une requête.
+    """
+    try:
+        # ADK passe les infos via callback_context
+        agent_name = "unknown_agent"
+        message = ""
+        
+        if 'callback_context' in kwargs:
+            context = kwargs['callback_context']
+            
+            # Récupérer le nom de l'agent (attribut direct)
+            if hasattr(context, 'agent_name'):
+                agent_name = context.agent_name
+                print(f"[DEBUG] Agent name: {agent_name}")
+            
+            # Récupérer le message utilisateur
+            if hasattr(context, 'user_content'):
+                user_content = context.user_content
+                print(f"[DEBUG] user_content type: {type(user_content)}")
+                
+                # user_content peut être un objet Content avec parts
+                if hasattr(user_content, 'parts'):
+                    if user_content.parts and len(user_content.parts) > 0:
+                        if hasattr(user_content.parts[0], 'text'):
+                            message = user_content.parts[0].text
+                            print(f"[DEBUG] Message: {message[:50]}...")
+                # Ou une simple string
+                elif isinstance(user_content, str):
+                    message = user_content
+                    print(f"[DEBUG] Message (str): {message[:50]}...")
+        
+        # Log structuré
+        agent_logger.log_agent_start(agent_name, message)
+        
+    except Exception as e:
+        # Ne pas crasher si le logging échoue
+        print(f"[Erreur callback agent_start] {e}")
+        import traceback
+        traceback.print_exc()
 
-    print("\nAgent démarré...")
-
-    
 
 def on_tool_execution_callback(**kwargs) -> None:
-    
-    #Callback appelé APRÈS qu'un outil a été exécuté
-    print("\n Outil exécuté")
+    """
+    Callback appelé APRÈS qu'un outil a été exécuté.
+    """
+    try:
+        # DEBUG: Afficher tous les kwargs pour comprendre la structure
+        print(f"\n[DEBUG on_tool_execution_callback] kwargs keys: {kwargs.keys()}")
+        
+        # ADK passe les infos via callback_context
+        tool_name = "unknown_tool"
+        tool_args = {}
+        result = ""
+        duration = 0
+        
+        if 'callback_context' in kwargs:
+            context = kwargs['callback_context']
+            print(f"[DEBUG] callback_context attributes: {[attr for attr in dir(context) if not attr.startswith('_')]}")
+            
+            # Explorer les attributs disponibles
+            if hasattr(context, 'function_call_id'):
+                print(f"[DEBUG] function_call_id: {context.function_call_id}")
+            
+            if hasattr(context, 'actions'):
+                actions = context.actions
+                print(f"[DEBUG] actions type: {type(actions)}")
+                if actions:
+                    print(f"[DEBUG] actions content: {actions}")
+                    # Les actions peuvent contenir des infos sur les tools
+                    if isinstance(actions, list) and len(actions) > 0:
+                        action = actions[-1]
+                        print(f"[DEBUG] last action: {action}")
+                        if hasattr(action, 'tool_name'):
+                            tool_name = action.tool_name
+                        if hasattr(action, 'tool_input'):
+                            tool_args = action.tool_input
+                        if hasattr(action, 'tool_output'):
+                            result = action.tool_output
+            
+            # Autre possibilité: regarder dans state ou event_actions
+            if hasattr(context, '_event_actions'):
+                print(f"[DEBUG] _event_actions: {context._event_actions}")
+            
+            print(f"[DEBUG] Tool name: {tool_name}")
+            print(f"[DEBUG] Tool args: {str(tool_args)[:100]}")
+            print(f"[DEBUG] Result preview: {str(result)[:100]}")
+        
+        # Log structuré
+        agent_logger.log_tool_execution(
+            tool_name=tool_name,
+            args=tool_args,
+            result=str(result),
+            duration=duration
+        )
+        
+    except Exception as e:
+        # Ne pas crasher si le logging échoue
+        print(f"[Erreur callback tool_execution] {e}")
+        import traceback
+        traceback.print_exc()
 
 
 
 # Application des callbacks aux agents principaux
-# Note : On applique les callbacks aux agents qui font le plus de travail
-# Les callbacks sont simplifiés pour éviter les erreurs d'accès aux attributs Context
 
 recipe_agent.before_agent_callback = on_agent_start_callback
-
 recipe_agent.after_tool_callback = on_tool_execution_callback
 
-cooking_agent.before_agent_callback = on_agent_start_callback
+recipe_search_with_state.before_agent_callback = on_agent_start_callback
+recipe_search_with_state.after_tool_callback = on_tool_execution_callback
 
-cooking_agent.after_tool_callback = on_tool_execution_callback
+cooking_instructions_agent.before_agent_callback = on_agent_start_callback
+cooking_instructions_agent.after_tool_callback = on_tool_execution_callback
+
+cooking_with_state.before_agent_callback = on_agent_start_callback
+cooking_with_state.after_tool_callback = on_tool_execution_callback

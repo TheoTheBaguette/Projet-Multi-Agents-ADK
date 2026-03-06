@@ -1,18 +1,15 @@
-"""
-Runner programmatique pour le système Chef Cuisinier
-Contrainte 7 du TP : instancie Runner + InMemorySessionService
-"""
-
+import asyncio
 from google.adk import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 from my_agent.agent import root_agent
 
 
-def main():
+async def main_async():
     print("Chef Cuisinier Virtuel - Système Multi-Agents")
+
     
-    # Instanciation Runner + InMemorySessionService (contrainte 7)
+    # Instanciation Runner + InMemorySessionService 
     session_service = InMemorySessionService()
     runner = Runner(
         app_name="chef_cuisinier",
@@ -23,11 +20,15 @@ def main():
     # Création session
     session_id = "user_session_001"
     user_id = "user_001"
-    session_service.create_session_sync(
-        app_name="chef_cuisinier",
-        user_id=user_id,
-        session_id=session_id
-    )
+    
+    try:
+        await session_service.create_session(
+            app_name="chef_cuisinier",
+            user_id=user_id,
+            session_id=session_id
+        )
+    except Exception:
+        pass  # Session existe déjà
     
     # Boucle d'interaction
     try:
@@ -35,7 +36,7 @@ def main():
             user_input = input("Vous: ").strip()
             
             if user_input.lower() in ['quit', 'exit', 'q']:
-                print("Au revoir!")
+                print("\nAu revoir!")
                 break
             
             if not user_input:
@@ -49,13 +50,11 @@ def main():
                     parts=[types.Part(text=user_input)]
                 )
                 
-                events = runner.run(
+                async for event in runner.run_async(
                     user_id=user_id,
                     session_id=session_id,
                     new_message=message
-                )
-                
-                for event in events:
+                ):
                     if hasattr(event, 'content') and hasattr(event.content, 'parts'):
                         for part in event.content.parts:
                             if hasattr(part, 'text'):
@@ -64,10 +63,14 @@ def main():
                 print("\n")
                 
             except Exception as e:
-                print(f"Erreur: {e}\n")
+                print(f"\nErreur: {e}\n")
     
     except KeyboardInterrupt:
-        print("\nFin du runner")
+        print("\n\nFin du runner (Ctrl+C)")
+
+
+def main():
+    asyncio.run(main_async())
 
 
 if __name__ == "__main__":

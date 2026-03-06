@@ -1,20 +1,3 @@
-"""
-Tools (Outils) du système Chef Cuisinier
-==========================================
-
-Les tools sont des FONCTIONS PYTHON que les agents peuvent appeler.
-Dans ADK, les tools doivent avoir :
-1. Des annotations de type (très important !)
-2. Une docstring détaillée (l'IA lit la doc pour comprendre quand utiliser le tool)
-3. Gestion des erreurs
-
-Ces tools seront utilisés par les agents pour :
-- Chercher des recettes selon les ingrédients
-- Suggérer des substitutions
-- Calculer la compatibilité
-- Générer des listes de courses
-"""
-
 from typing import Optional
 from ..recipes_db import RECIPES_DB, SUBSTITUTIONS, get_all_recipes
 

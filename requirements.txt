@@ -1,0 +1,14 @@
+# Dépendances du projet Chef Cuisinier Virtuel - Système Multi-Agents ADK
+# Installation : pip install -r requirements.txt
+
+# Framework ADK (Google Agent Development Kit)
+google-adk>=1.26.0
+
+# Python 3.10+ requis
+# Les modules suivants sont inclus dans la bibliothèque standard Python :
+# - typing
+# - logging
+# - json
+# - datetime
+# - pathlib
+# - os
